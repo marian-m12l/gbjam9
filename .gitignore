@@ -11,5 +11,7 @@
 *.asm
 *.noi
 .vscode
-assets/*.c
-assets/*.h
+metasprites/*.c
+metasprites/*.h
+tilesets/*.c
+tilesets/*.h

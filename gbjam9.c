@@ -1,20 +1,23 @@
 #include <gb/console.h>
 #include <gb/gb.h>
 #include <gb/metasprites.h>
+#include <stdlib.h>
 
-#include "assets/bird.h"
+#include "metasprites/bird.h"
 
-const unsigned char pattern[] = {0x80,0x80,0x40,0x40,0x20,0x20,0x10,0x10,0x08,0x08,0x04,0x04,0x02,0x02,0x01,0x01};
-
-joypads_t joypads, prevJoypads;
+#include "tilesets/sky_tiles.h"
+#include "tilesets/sky_map.h"
 
 // Character metasprite tiles are loaded into VRAM starting at tile number 0
 #define BIRD_TILE_NUM_START 0
 // Character metasprite will be built starting with hardware sprite 0
 #define BIRD_SPR_NUM_START 0
 
+joypads_t joypads, prevJoypads;
+
 // Character position
 uint16_t posX, posY;
+int16_t speedX, speedY;
 uint8_t idx, rot;
 
 
@@ -24,9 +27,9 @@ void main() {
     OBP0_REG = 0xE4;    // Sprite palette 0 : Black, Dark gray, Light gray, Transparent
     OBP1_REG = 0xE0;    // Sprite palette 1 : Black, Dark gray, White, Transparent
 
-	// Fill the screen background with a single tile pattern
-    fill_bkg_rect(0, 0, 20, 18, 0);
-    set_bkg_data(0, 1, pattern);
+    // Background tilemap
+    set_bkg_data(0, sky_tiles_count, sky_tiles);
+    set_bkg_tiles(0, 0, sky_map_width, sky_map_height, sky_map);
 
     // Load character metasprite tile data into VRAM
     set_sprite_data(BIRD_TILE_NUM_START, sizeof(bird_data) >> 4, bird_data);
@@ -42,7 +45,9 @@ void main() {
  
     // Set initial position
     posX = posY = 64 << 4;
-    idx = 2; rot = 0;
+    speedX = 10;
+    speedY = 0;
+    idx = 2;    // FIXME Animation sprites
 
     while(1) {        
         // Poll joypad
@@ -50,35 +55,54 @@ void main() {
         joypad_ex(&joypads);
         
         // Handle movements
-        if (joypads.joy0 & J_UP) {
-            posY -= 16;
-        } else if (joypads.joy0 & J_DOWN) {
-            posY += 16;
+        if ((joypads.joy0 & J_UP) && !(prevJoypads.joy0 & J_UP)) {
+            // TODO Push upwards
+            speedY -= 16;
+            // FIXME Full flapping animation
+            idx++;
+            if (idx > 9) idx=2;
+        } else if ((joypads.joy0 & J_DOWN) && !(prevJoypads.joy0 & J_DOWN)) {
+            // TODO Dive
+            speedY += 32;
+            // FIXME Diving animation
+        } else {
+            // TODO Glide
+            // FIXME Should horizontal speed increase slightly while gliding?
         }
 
+        // Switch direction, but speed stays constant
+        // FIXME Should speed be slowed donw when making a U-turn?
         if (joypads.joy0 & J_LEFT) {
-            posX -= 16;
-            rot = 0;
+            speedX = -abs(speedX);
         } else if (joypads.joy0 & J_RIGHT) {
-            posX += 16;
-            rot = 1;
-        }
-
-
-        // Press A button to show/hide metasprite
-        if ((joypads.joy0 & J_A) && !(prevJoypads.joy0 & J_A)) {
-            posX = posY = 64 << 4;
+            speedX = abs(speedX);
         }
 
         // TODO Handle all animation cycles
-        // Press B button to cycle through metasprite animations FIXME Autmatic animation !!!
-        if (joypads.joy0 & J_B) {
-            idx++;
-            if (idx > 9) idx=2;
+
+        // Gravity (gliding) FIXME Use state-machine to handle flapping/gliding/diving/idling
+        speedY += 1;
+        if(joypads.joy0 & J_DOWN) {
+            if (speedY > 32) speedY = 32;   // FIXME Max speed when diving?
+        } else {
+            if (speedY > 8) speedY = 8;   // FIXME Max speed when gliding?
+        }
+
+        // Move character
+        posX += speedX;
+        posY += speedY;
+
+        // Scroll background
+        if ((posY >> 4) > 144/2) {
+            uint8_t scrollY = (posY >> 4) - (144/2);
+            move_bkg(0, scrollY);
+        } else {
+            move_bkg(0, 0);
         }
 
         uint8_t hiwater = 0;
         // FIXME Should only be called when something changed
+        rot = speedX > 0;
         switch (rot) {
             case 0: hiwater = move_metasprite       (bird_metasprites[idx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
             case 1: hiwater = move_metasprite_vflip (bird_metasprites[idx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
