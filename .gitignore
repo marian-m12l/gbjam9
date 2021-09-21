@@ -11,3 +11,5 @@
 *.asm
 *.noi
 .vscode
+assets/*.c
+assets/*.h
