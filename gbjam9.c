@@ -1,9 +1,11 @@
 #include <gb/console.h>
 #include <gb/gb.h>
 #include <gb/metasprites.h>
+#include <rand.h>
 #include <stdlib.h>
 
 #include "metasprites/bird.h"
+#include "metasprites/food.h"
 
 #include "tilesets/sky_tiles.h"
 #include "tilesets/sky_map.h"
@@ -33,6 +35,8 @@
 #define MIN_POS_Y 16
 #define MAX_POS_Y 144
 
+#define MAX_FOOD 16
+
 joypads_t joypads, prevJoypads;
 uint64_t frame = 0;
 
@@ -51,12 +55,38 @@ typedef enum status_t {
 } status_t;
 status_t charStatus = GLIDING;
 
+// Food
+typedef struct food_t {
+    uint8_t enabled;
+    uint8_t spriteOffset;
+    uint8_t spriteIdx;
+    uint64_t animationLastFrame;
+    int16_t posX, posY;
+    int16_t speedX, speedY;
+    int8_t value;
+} food_t;
+food_t food[MAX_FOOD];
+
 
 uint8_t justPressed() {
     return (joypads.joy0 ^ prevJoypads.joy0) & joypads.joy0;
 }
 uint8_t justReleased() {
     return (joypads.joy0 ^ prevJoypads.joy0) & prevJoypads.joy0;
+}
+
+int8_t nextAvailableFoodSlot() {
+    uint8_t slot = 0;
+    while (slot < /*FIXME MAX_FOOD*/ 1 && food[slot].enabled != 0) {
+        slot++;
+    }
+    if (slot < /*FIXME MAX_FOOD*/ 1) return slot;
+    else return -1;
+}
+
+uint8_t collideWithChar(int16_t foodPosX, int16_t foodPosY) {
+    // TODO Fix collision detection
+    return (foodPosX < posX + (16 << 4) && foodPosX + (8 << 4) > posX && foodPosY < posY + (16 << 4) && foodPosY + (8 << 4) > posY);
 }
 
 
@@ -72,6 +102,9 @@ void main() {
 
     // Load character metasprite tile data into VRAM
     set_sprite_data(BIRD_TILE_NUM_START, sizeof(bird_data) >> 4, bird_data);
+
+    // Load food metasprites tile data into VRAM
+    set_sprite_data(BIRD_TILE_NUM_START + sizeof(bird_data) >> 4, sizeof(food_data) >> 4, food_data);
 
     // Show background and sprites
     SHOW_BKG; SHOW_SPRITES;
@@ -193,12 +226,11 @@ void main() {
         }
 
         // Scroll background
+        uint8_t scrollY = 0;
         if ((posY >> 4) > 144/2) {
-            uint8_t scrollY = (posY >> 4) - (144/2);
-            move_bkg(0, scrollY);
-        } else {
-            move_bkg(0, 0);
+            scrollY = (posY >> 4) - (144/2);
         }
+        move_bkg(0, scrollY);
 
         uint8_t hiwater = 0;
         // FIXME Should only be called when something changed --> Character moved or changed direction or animation frame changed
@@ -210,6 +242,50 @@ void main() {
 
         // Hide rest of the hardware sprites, because amount of sprites differs between animation frames.
         for (uint8_t i = hiwater; i < 40; i++) shadow_OAM[i].y = 0;
+
+        // TODO Spawn food randomly
+        int8_t availableSlot = nextAvailableFoodSlot();
+        if (availableSlot != -1 && rand() > 120) {  // FIXME Need to initialize randomizer with seed (for instance when the player presses start button on the title screen)
+            food[availableSlot].enabled = 1;
+            // TODO random position, speed, food type (sprite offset), value, ...
+            food[availableSlot].spriteOffset = 0;
+            food[availableSlot].spriteIdx = 0;
+            food[availableSlot].animationLastFrame = frame;
+            food[availableSlot].posX = 80 << 4;
+            food[availableSlot].posY = 80 << 4;
+            food[availableSlot].speedX = 4;
+            food[availableSlot].speedY = 2;
+            food[availableSlot].value = 10;
+        }
+
+        for (int slot=0; slot<16; slot++) {
+            if (food[slot].enabled != 0) {
+                // TODO Speed changes ???
+                // Food movements
+                food[slot].posX += food[slot].speedX;
+                food[slot].posY += food[slot].speedY;
+
+                // Destroy food when out of screen or caught by the character
+                if (collideWithChar(food[slot].posX, food[slot].posY)) {
+                    food[slot].enabled = 0;
+                    // FIXME score += food[slot].value;
+                } else if ((food[slot].posX >> 4) < -20 && food[slot].speedX < 0) {
+                    food[slot].enabled = 0;
+                } else if ((food[slot].posX >> 4) > 180 && food[slot].speedX > 0) {
+                    food[slot].enabled = 0;
+                }
+
+                // Display and animate food sprites
+                if (frame - food[slot].animationLastFrame > 15) {
+                    food[slot].animationLastFrame = frame;
+                    food[slot].spriteIdx++;
+                    if (food[slot].spriteIdx > 2) {    // FIXME animation frames number ???
+                        food[slot].spriteIdx = 0;
+                    }
+                }
+                move_metasprite(food_metasprites[food[slot].spriteOffset + food[slot].spriteIdx], BIRD_TILE_NUM_START + sizeof(bird_data) >> 4 + food[slot].spriteOffset, BIRD_SPR_NUM_START + 4, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY);
+            } // FIXME Otherwise hide metasprites ???
+        }
 
         // Wait for VBlank
         wait_vbl_done();
