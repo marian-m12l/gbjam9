@@ -28,7 +28,7 @@ metasprites/%.c: metasprites/%.png
 tilesets/%_map.c: tilesets/%_tiles.c ;
 
 tilesets/%_tiles.c: tilesets/%.png
-	$(PNG2GBTILES) $< -csource -g -tilesz8x8 tilesets/$*.c
+	$(PNG2GBTILES) $< -csource -g -tilesz=8x8 tilesets/$*.c
 
 %.o: %.c
 	$(CC) $(CFLAGS) -o $@ -c $<
