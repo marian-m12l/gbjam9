@@ -10,6 +10,7 @@
 *.sym
 *.asm
 *.noi
+*.sav
 .vscode
 metasprites/*.c
 metasprites/*.h

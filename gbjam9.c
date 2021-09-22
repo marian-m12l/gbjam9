@@ -13,11 +13,31 @@
 // Character metasprite will be built starting with hardware sprite 0
 #define BIRD_SPR_NUM_START 0
 
+#define BIRD_SPRITE_GLIDING 5
+#define BIRD_SPRITE_FLAPPING_START 2
+#define BIRD_SPRITE_FLAPPING_END 9
+#define BIRD_SPRITE_DIVING_START 10
+#define BIRD_SPRITE_DIVING_END 12
+
+#define INITIAL_SPEED_X 1
+#define MAX_SPEED_X 12
+#define INITIAL_SPEED_Y 0
+#define MAX_SPEED_Y_GLIDING 8
+#define MAX_SPEED_Y_DIVING 32
+#define MAX_SPEED_Y_UPWARDS -32
+#define SPEED_Y_BOOST_FLAPPING -32
+#define SPEED_Y_BOOST_DIVING 32
+
+#define MIN_POS_X 20
+#define MAX_POS_X 156
+#define MIN_POS_Y 16
+#define MAX_POS_Y 144
+
 joypads_t joypads, prevJoypads;
 uint64_t frame = 0;
 
 // Character position
-uint16_t posX, posY;
+int16_t posX, posY;
 int16_t speedX, speedY;
 uint8_t charSpriteIdx, rot;
 uint64_t animationLastFrame;
@@ -64,9 +84,9 @@ void main() {
  
     // Set initial position
     posX = posY = 64 << 4;
-    speedX = 10;
-    speedY = 0;
-    charSpriteIdx = 5;    // FIXME Animation sprites
+    speedX = INITIAL_SPEED_X;
+    speedY = INITIAL_SPEED_Y;
+    charSpriteIdx = BIRD_SPRITE_GLIDING;
 
     while(1) {        
         // Poll joypad
@@ -77,11 +97,11 @@ void main() {
         uint8_t released = justReleased();
         
         // Switch direction, but speed stays constant
-        // FIXME Should speed be slowed down when making a U-turn?
-        if (pressed & J_LEFT) {
-            speedX = -abs(speedX);
-        } else if (pressed & J_RIGHT) {
-            speedX = abs(speedX);
+        // Speed is slowed down when making a U-turn
+        if ((pressed & J_LEFT) && speedX > 0) {
+            speedX = -INITIAL_SPEED_X;
+        } else if ((pressed & J_RIGHT) && speedX < 0) {
+            speedX = INITIAL_SPEED_X;
         }
 
         switch (charStatus) {
@@ -89,49 +109,57 @@ void main() {
                 // TODO When resting on a platform???
                 break;
             case GLIDING:
-                // TODO Handle buttons: flapping with A, diving with DOWN
+                // Handle buttons: flapping with A, diving with DOWN
                 if (pressed & J_A) {
                     // Push upwards
-                    speedY -= 32;
-                    charSpriteIdx = 5;    // TODO Handle animation reset ???
+                    speedY += SPEED_Y_BOOST_FLAPPING;
                     charStatus = FLAPPING;
                     break;
-                }
-                if (pushed & J_DOWN) {
+                } else if (pushed & J_DOWN) {
                     // Dive
-                    speedY += 32;
-                    charSpriteIdx = 10;    // TODO Handle animation reset ???
+                    speedY += SPEED_Y_BOOST_DIVING;
                     charStatus = DIVING;
                     break;
+                } else if (charSpriteIdx != BIRD_SPRITE_GLIDING) {
+                    charSpriteIdx = BIRD_SPRITE_GLIDING;
                 }
-                // FIXME Should horizontal speed increase slightly while gliding?
+                // Horizontal speed increases slightly while gliding
+                if (abs(speedX) < MAX_SPEED_X) {
+                    speedX = speedX > 0 ? speedX + 1 : speedX - 1;
+                }
                 break;
             case FLAPPING:
-                // TODO Display flapping animation FIXME Multiple frames per sprite !!!
-                if (frame - animationLastFrame > 2) {
+                // Display flapping animation
+                if (charSpriteIdx < BIRD_SPRITE_FLAPPING_START || charSpriteIdx > BIRD_SPRITE_FLAPPING_END) {
+                    animationLastFrame = frame;
+                    charSpriteIdx = BIRD_SPRITE_GLIDING;
+                } else if (frame - animationLastFrame > 2) {
                     animationLastFrame = frame;
                     charSpriteIdx++;
-                    if (charSpriteIdx > 9) {
-                        charSpriteIdx = 2;    // TODO Handle animation reset ???
-                    } else if (charSpriteIdx == 5) {
+                    if (charSpriteIdx > BIRD_SPRITE_FLAPPING_END) {
+                        charSpriteIdx = BIRD_SPRITE_FLAPPING_START;
+                    } else if (charSpriteIdx == BIRD_SPRITE_GLIDING) {
                         // Go back to gliding when animation finishes
                         charStatus = GLIDING;
                     }
                 }
                 break;
             case DIVING:
-                // TODO Display diving animation FIXME Multiple frames per sprite !!!
-                if (frame - animationLastFrame > 2) {
+                // Display diving animation
+                if (charSpriteIdx < BIRD_SPRITE_DIVING_START || charSpriteIdx > BIRD_SPRITE_DIVING_END) {
+                    animationLastFrame = frame;
+                    charSpriteIdx = BIRD_SPRITE_DIVING_START;
+                } else if (charSpriteIdx < BIRD_SPRITE_DIVING_END && frame - animationLastFrame > 2) {
                     animationLastFrame = frame;
                     charSpriteIdx++;
-                    if (charSpriteIdx > 12) {
-                        charSpriteIdx = 12;    // TODO Handle animation reset ???
-                    }
+                }
+                // Horizontal speed increases faster while diving
+                if (abs(speedX) < MAX_SPEED_X) {
+                    speedX = speedX > 0 ? speedX + 4 : speedX - 4;
                 }
                 // TODO Handle collision (hurt enemies ???)
-                // TODO Go back to gliding when DOWN button is released
+                // Go back to gliding when DOWN button is released
                 if (released & J_DOWN) {
-                    charSpriteIdx = 5;    // TODO Handle animation reset ???
                     charStatus = GLIDING;
                 }
                 break;
@@ -139,13 +167,30 @@ void main() {
 
         // Gravity
         speedY += 1;
-        int16_t maxSpeedY = charStatus == DIVING ? 32 : 8;
+        int16_t maxSpeedY = charStatus == DIVING ? MAX_SPEED_Y_DIVING : MAX_SPEED_Y_GLIDING;
         if (speedY > maxSpeedY) speedY = maxSpeedY; // Max speed downwards
-        if (speedY < -32) speedY = -32; // Max speed upwards
+        if (speedY < MAX_SPEED_Y_UPWARDS) speedY = MAX_SPEED_Y_UPWARDS; // Max speed upwards
 
         // Move character
         posX += speedX;
         posY += speedY;
+
+        // Automatic U-turn
+        if ((posX >> 4) < MIN_POS_X && speedX < 0) {
+            speedX = INITIAL_SPEED_X;
+        } else if ((posX >> 4) > MAX_POS_X && speedX > 0) {
+            speedX = -INITIAL_SPEED_X;
+        }
+        // Automatic flapping
+        if ((posY >> 4) > MAX_POS_Y && speedY > 0 && charStatus != FLAPPING) {
+            // Push upwards
+            speedY += SPEED_Y_BOOST_FLAPPING;
+            charStatus = FLAPPING;
+        }
+        // Upper border capping
+        if ((posY >> 4) < MIN_POS_Y) {
+            posY = MIN_POS_Y << 4;
+        }
 
         // Scroll background
         if ((posY >> 4) > 144/2) {
