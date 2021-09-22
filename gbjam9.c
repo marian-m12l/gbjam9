@@ -14,11 +14,30 @@
 #define BIRD_SPR_NUM_START 0
 
 joypads_t joypads, prevJoypads;
+uint64_t frame = 0;
 
 // Character position
 uint16_t posX, posY;
 int16_t speedX, speedY;
-uint8_t idx, rot;
+uint8_t charSpriteIdx, rot;
+uint64_t animationLastFrame;
+
+// State machine
+typedef enum status_t {
+    IDLING,
+    GLIDING,
+    FLAPPING,
+    DIVING
+} status_t;
+status_t charStatus = GLIDING;
+
+
+uint8_t justPressed() {
+    return (joypads.joy0 ^ prevJoypads.joy0) & joypads.joy0;
+}
+uint8_t justReleased() {
+    return (joypads.joy0 ^ prevJoypads.joy0) & prevJoypads.joy0;
+}
 
 
 void main() {
@@ -47,46 +66,82 @@ void main() {
     posX = posY = 64 << 4;
     speedX = 10;
     speedY = 0;
-    idx = 2;    // FIXME Animation sprites
+    charSpriteIdx = 5;    // FIXME Animation sprites
 
     while(1) {        
         // Poll joypad
         prevJoypads = joypads;
         joypad_ex(&joypads);
+        uint8_t pressed = justPressed();
+        uint8_t pushed = joypads.joy0;
+        uint8_t released = justReleased();
         
-        // Handle movements
-        if ((joypads.joy0 & J_UP) && !(prevJoypads.joy0 & J_UP)) {
-            // TODO Push upwards
-            speedY -= 16;
-            // FIXME Full flapping animation
-            idx++;
-            if (idx > 9) idx=2;
-        } else if ((joypads.joy0 & J_DOWN) && !(prevJoypads.joy0 & J_DOWN)) {
-            // TODO Dive
-            speedY += 32;
-            // FIXME Diving animation
-        } else {
-            // TODO Glide
-            // FIXME Should horizontal speed increase slightly while gliding?
-        }
-
         // Switch direction, but speed stays constant
-        // FIXME Should speed be slowed donw when making a U-turn?
-        if (joypads.joy0 & J_LEFT) {
+        // FIXME Should speed be slowed down when making a U-turn?
+        if (pressed & J_LEFT) {
             speedX = -abs(speedX);
-        } else if (joypads.joy0 & J_RIGHT) {
+        } else if (pressed & J_RIGHT) {
             speedX = abs(speedX);
         }
 
-        // TODO Handle all animation cycles
-
-        // Gravity (gliding) FIXME Use state-machine to handle flapping/gliding/diving/idling
-        speedY += 1;
-        if(joypads.joy0 & J_DOWN) {
-            if (speedY > 32) speedY = 32;   // FIXME Max speed when diving?
-        } else {
-            if (speedY > 8) speedY = 8;   // FIXME Max speed when gliding?
+        switch (charStatus) {
+            case IDLING:
+                // TODO When resting on a platform???
+                break;
+            case GLIDING:
+                // TODO Handle buttons: flapping with A, diving with DOWN
+                if (pressed & J_A) {
+                    // Push upwards
+                    speedY -= 32;
+                    charSpriteIdx = 5;    // TODO Handle animation reset ???
+                    charStatus = FLAPPING;
+                    break;
+                }
+                if (pushed & J_DOWN) {
+                    // Dive
+                    speedY += 32;
+                    charSpriteIdx = 10;    // TODO Handle animation reset ???
+                    charStatus = DIVING;
+                    break;
+                }
+                // FIXME Should horizontal speed increase slightly while gliding?
+                break;
+            case FLAPPING:
+                // TODO Display flapping animation FIXME Multiple frames per sprite !!!
+                if (frame - animationLastFrame > 2) {
+                    animationLastFrame = frame;
+                    charSpriteIdx++;
+                    if (charSpriteIdx > 9) {
+                        charSpriteIdx = 2;    // TODO Handle animation reset ???
+                    } else if (charSpriteIdx == 5) {
+                        // Go back to gliding when animation finishes
+                        charStatus = GLIDING;
+                    }
+                }
+                break;
+            case DIVING:
+                // TODO Display diving animation FIXME Multiple frames per sprite !!!
+                if (frame - animationLastFrame > 5) {
+                    animationLastFrame = frame;
+                    charSpriteIdx++;
+                    if (charSpriteIdx > 12) {
+                        charSpriteIdx = 12;    // TODO Handle animation reset ???
+                    }
+                }
+                // TODO Handle collision (hurt enemies ???)
+                // TODO Go back to gliding when DOWN button is released
+                if (released & J_DOWN) {
+                    charSpriteIdx = 5;    // TODO Handle animation reset ???
+                    charStatus = GLIDING;
+                }
+                break;
         }
+
+        // Gravity
+        speedY += 1;
+        int16_t maxSpeedY = charStatus == DIVING ? 32 : 8;
+        if (speedY > maxSpeedY) speedY = maxSpeedY; // Max speed downwards
+        if (speedY < -32) speedY = -32; // Max speed upwards
 
         // Move character
         posX += speedX;
@@ -101,11 +156,11 @@ void main() {
         }
 
         uint8_t hiwater = 0;
-        // FIXME Should only be called when something changed
+        // FIXME Should only be called when something changed --> Character moved or changed direction or animation frame changed
         rot = speedX > 0;
         switch (rot) {
-            case 0: hiwater = move_metasprite       (bird_metasprites[idx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
-            case 1: hiwater = move_metasprite_vflip (bird_metasprites[idx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
+            case 0: hiwater = move_metasprite       (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
+            case 1: hiwater = move_metasprite_vflip (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
         };
 
         // Hide rest of the hardware sprites, because amount of sprites differs between animation frames.
@@ -113,6 +168,7 @@ void main() {
 
         // Wait for VBlank
         wait_vbl_done();
+        frame++;
     }
 }
 
