@@ -121,7 +121,7 @@ void main() {
                 break;
             case DIVING:
                 // TODO Display diving animation FIXME Multiple frames per sprite !!!
-                if (frame - animationLastFrame > 5) {
+                if (frame - animationLastFrame > 2) {
                     animationLastFrame = frame;
                     charSpriteIdx++;
                     if (charSpriteIdx > 12) {

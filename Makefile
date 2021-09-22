@@ -34,10 +34,10 @@ tilesets/%_tiles.c: tilesets/%.png
 	$(CC) $(CFLAGS) -o $@ -c $<
 
 $(TARGET): $(METASPRITES_SRC) $(TILESETS_SRC) $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -Wm-ynGBJAM9 -o $@ $^
 
 run: $(TARGET)
-	higan $(TARGET)
+	mgba-qt -4 $(TARGET)
 
 clean:
 	rm -rf *.o *.lst *.map *.gb *~ *.rel *.cdb *.ihx *.lnk *.sym *.asm *.noi $(METASPRITES_SRC) $(METASPRITES_HEADERS) $(METASPRITES_OBJ) $(TILESETS_SRC) $(TILESETS_HEADERS) $(TILESETS_OBJ)
