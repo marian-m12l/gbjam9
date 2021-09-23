@@ -10,6 +10,8 @@
 
 #include "tilesets/title_tiles.h"
 #include "tilesets/title_map.h"
+#include "tilesets/instructions_tiles.h"
+#include "tilesets/instructions_map.h"
 #include "tilesets/sky_tiles.h"
 #include "tilesets/sky_map.h"
 #include "tilesets/font_tiles.h"
@@ -51,6 +53,7 @@ uint64_t frame = 0;
 // Screens state machine
 typedef enum screen_t {
     TITLE_SCREEN,
+    INSTRUCTIONS_SCREEN,
     GAME_SCREEN,
     WINNING_SCREEN
 } screen_t;
@@ -103,6 +106,18 @@ void initScreen() {
             set_bkg_tiles(2, 12, 5, 1, pressTiles);
             const unsigned char startTiles[5] = { title_tiles_count + 14, title_tiles_count + 15, title_tiles_count + 16, title_tiles_count + 12, title_tiles_count + 15 };
             set_bkg_tiles(3, 14, 5, 1, startTiles);
+
+            // Show background
+            SHOW_BKG; HIDE_WIN; HIDE_SPRITES;
+        
+            // Set initial state
+            frame = 0;
+            break;
+        }
+        case INSTRUCTIONS_SCREEN: {
+            // Background tilemap
+            set_bkg_data(0, instructions_tiles_count, instructions_tiles);
+            set_bkg_tiles(0, 0, instructions_map_width, instructions_map_height, instructions_map);
 
             // Show background
             SHOW_BKG; HIDE_WIN; HIDE_SPRITES;
@@ -191,11 +206,26 @@ void titleScreen() {
     uint8_t released = justReleased();
 
     if ((pressed & J_START)) {
-        screen = GAME_SCREEN;   // FIXME Transition
+        screen = INSTRUCTIONS_SCREEN;   // FIXME Transition
         initScreen();
     }
 
     // TODO Blink press start ???
+}
+
+
+void instructionsScreen() {
+    // Poll joypad
+    prevJoypads = joypads;
+    joypad_ex(&joypads);
+    uint8_t pressed = justPressed();
+    uint8_t pushed = joypads.joy0;
+    uint8_t released = justReleased();
+
+    if (pressed) {
+        screen = GAME_SCREEN;   // FIXME Transition
+        initScreen();
+    }
 }
 
 
@@ -434,6 +464,9 @@ void main() {
         switch (screen) {
             case TITLE_SCREEN:
                 titleScreen();
+                break;
+            case INSTRUCTIONS_SCREEN:
+                instructionsScreen();
                 break;
             case GAME_SCREEN:
                 gameScreen();
