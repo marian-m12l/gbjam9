@@ -15,11 +15,18 @@
 #include "tilesets/sky_tiles.h"
 #include "tilesets/sky_map.h"
 #include "tilesets/font_tiles.h"
+#include "tilesets/pause_tiles.h"
 
-// Character metasprite tiles are loaded into VRAM starting at tile number 0
-#define BIRD_TILE_NUM_START 0
-// Character metasprite will be built starting with hardware sprite 0
-#define BIRD_SPR_NUM_START 0
+
+// Pause sprite tiles are loaded into VRAM
+#define PAUSE_TILE_NUM_START 0
+// Pause sprite will be built starting with hardware sprite 0
+#define PAUSE_SPR_NUM_START 0
+
+// Character metasprite tiles are loaded into VRAM after pause tiles
+#define BIRD_TILE_NUM_START (PAUSE_TILE_NUM_START + 5)
+// Character metasprite will be built starting with hardware sprite 5 (after pause sprites)
+#define BIRD_SPR_NUM_START (PAUSE_SPR_NUM_START + 5)
 
 #define BIRD_SPRITE_GLIDING 5
 #define BIRD_SPRITE_FLAPPING_START 2
@@ -43,12 +50,13 @@
 
 #define MAX_FOOD 8
 // Food metasprite tiles are loaded into VRAM after character tiles
-#define FOOD_TILE_NUM_START (BIRD_TILE_NUM_START + sizeof(bird_data) >> 4)
-// Food metasprite will be built starting with hardware sprite 4 (after character sprites)
-#define FOOD_SPR_NUM_START 4
+#define FOOD_TILE_NUM_START (BIRD_TILE_NUM_START + (sizeof(bird_data) >> 4))
+// Food metasprite will be built starting with hardware sprite 9 (after character sprites)
+#define FOOD_SPR_NUM_START (BIRD_SPR_NUM_START + 4)
 
 joypads_t joypads, prevJoypads;
 uint64_t frame = 0;
+uint8_t paused = 0;
 
 // Screens state machine
 typedef enum screen_t {
@@ -142,6 +150,9 @@ void initScreen() {
             // Load food metasprites tile data into VRAM
             set_sprite_data(FOOD_TILE_NUM_START, sizeof(food_data) >> 4, food_data);
 
+            // Load pause sprites tile data into VRAM
+            set_sprite_data(PAUSE_TILE_NUM_START, pause_tiles_count, pause_tiles);
+
             // Show background, window and sprites
             SHOW_BKG; SHOW_WIN; SHOW_SPRITES;
             
@@ -156,6 +167,7 @@ void initScreen() {
             charSpriteIdx = BIRD_SPRITE_GLIDING;
             score = 0;
             frame = 0;
+            paused = 0;
             break;
         }
         case WINNING_SCREEN: {
@@ -211,6 +223,8 @@ void titleScreen() {
     }
 
     // TODO Blink press start ???
+
+    frame++;
 }
 
 
@@ -226,6 +240,8 @@ void instructionsScreen() {
         screen = GAME_SCREEN;   // FIXME Transition
         initScreen();
     }
+
+    frame++;
 }
 
 
@@ -242,6 +258,26 @@ void gameScreen() {
     int16_t prevY = posY;
     uint8_t prevScrollY = scrollY;
     uint16_t prevScore = score;
+
+    if (pressed & J_START) {
+        if (paused) {
+            paused = 0;
+            for (int c=0; c<5; c++) {
+                shadow_OAM[PAUSE_SPR_NUM_START + c].y = 0;
+            }
+        } else {
+            paused = 1;
+            for (int c=0; c<5; c++) {
+                set_sprite_tile(PAUSE_SPR_NUM_START + c, PAUSE_TILE_NUM_START + c);
+                move_sprite(PAUSE_SPR_NUM_START + c, 68 + c*8, 84);
+            }
+        }
+    }
+
+    // Show pause
+    if (paused) {
+        return;
+    }
     
     // Switch direction, but speed stays constant
     // Speed is slowed down when making a U-turn
@@ -359,7 +395,7 @@ void gameScreen() {
             case 1: hiwater = move_metasprite_vflip (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
         };
         // Hide rest of the hardware sprites, because amount of sprites differs between animation frames. Max sprites used by bird metasprite is 4.
-        for (uint8_t i = hiwater; i < 4; i++) shadow_OAM[i].y = 0;
+        for (uint8_t i = hiwater; i < 4; i++) shadow_OAM[BIRD_SPR_NUM_START+i].y = 0;
     }
 
     // Spawn food randomly
@@ -441,11 +477,13 @@ void gameScreen() {
         }
         set_win_tiles(14, 0, 5, 1, scoreTiles);
     }
+
+    frame++;
 }
 
 
 void winningScreen() {
-
+    frame++;
 }
 
 
@@ -478,7 +516,6 @@ void main() {
 
         // Wait for VBlank
         wait_vbl_done();
-        frame++;
     }
 }
 
