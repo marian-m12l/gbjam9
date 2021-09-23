@@ -2,6 +2,7 @@
 #include <gb/gb.h>
 #include <gb/metasprites.h>
 #include <rand.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "metasprites/bird.h"
@@ -9,6 +10,8 @@
 
 #include "tilesets/sky_tiles.h"
 #include "tilesets/sky_map.h"
+#include "tilesets/font_tiles.h"
+#include "tilesets/font_map.h"
 
 // Character metasprite tiles are loaded into VRAM starting at tile number 0
 #define BIRD_TILE_NUM_START 0
@@ -35,7 +38,11 @@
 #define MIN_POS_Y 16
 #define MAX_POS_Y 144
 
-#define MAX_FOOD 16
+#define MAX_FOOD 8
+// Food metasprite tiles are loaded into VRAM after character tiles
+#define FOOD_TILE_NUM_START (BIRD_TILE_NUM_START + sizeof(bird_data) >> 4)
+// Food metasprite will be built starting with hardware sprite 4 (after character sprites)
+#define FOOD_SPR_NUM_START 4
 
 joypads_t joypads, prevJoypads;
 uint64_t frame = 0;
@@ -43,8 +50,11 @@ uint64_t frame = 0;
 // Character position
 int16_t posX, posY;
 int16_t speedX, speedY;
-uint8_t charSpriteIdx, rot;
+uint8_t scrollY;
+uint8_t charSpriteIdx;
 uint64_t animationLastFrame;
+uint32_t score;
+uint8_t scoreTiles[5] = { sky_tiles_count, sky_tiles_count, sky_tiles_count, sky_tiles_count, sky_tiles_count };
 
 // State machine
 typedef enum status_t {
@@ -75,18 +85,26 @@ uint8_t justReleased() {
     return (joypads.joy0 ^ prevJoypads.joy0) & prevJoypads.joy0;
 }
 
+// Number of concurrent food increases with time
 int8_t nextAvailableFoodSlot() {
+    uint64_t maxAvailable = 1 + (frame >> 8);
+    if (maxAvailable > MAX_FOOD)    maxAvailable = MAX_FOOD;
     uint8_t slot = 0;
-    while (slot < /*FIXME MAX_FOOD*/ 1 && food[slot].enabled != 0) {
+    while (slot < maxAvailable && food[slot].enabled != 0) {
         slot++;
     }
-    if (slot < /*FIXME MAX_FOOD*/ 1) return slot;
+    if (slot < maxAvailable) return slot;
     else return -1;
 }
 
 uint8_t collideWithChar(int16_t foodPosX, int16_t foodPosY) {
-    // TODO Fix collision detection
-    return (foodPosX < posX + (16 << 4) && foodPosX + (8 << 4) > posX && foodPosY < posY + (16 << 4) && foodPosY + (8 << 4) > posY);
+    // Metasprite origin is the pivot point
+    int16_t charX = (posX >> 4) - bird_PIVOT_X;
+    int16_t charY = (posY >> 4) - bird_PIVOT_Y;
+    // FIXME Substract pivot if using metasprites for food!
+    int16_t foodX = (foodPosX >> 4);
+    int16_t foodY = (foodPosY >> 4) - scrollY;  // Need to account for background scroll
+    return (foodX < (charX + 16) && (foodX + 8) > charX && foodY < (charY + 16) && (foodY + 8) > charY);
 }
 
 
@@ -100,14 +118,20 @@ void main() {
     set_bkg_data(0, sky_tiles_count, sky_tiles);
     set_bkg_tiles(0, 0, sky_map_width, sky_map_height, sky_map);
 
+    // HUD
+    set_win_data(sky_tiles_count, font_tiles_count, font_tiles);
+    const unsigned char font_map[11] = { sky_tiles_count,   sky_tiles_count+1,   sky_tiles_count+2,   sky_tiles_count+3,   sky_tiles_count+4,   sky_tiles_count+5,   sky_tiles_count+6,   sky_tiles_count+7,   sky_tiles_count+8,   sky_tiles_count+9,  sky_tiles_count+10 };
+    set_win_tiles(14, 0, 5, 1, scoreTiles);
+    move_win(7, 136);
+
     // Load character metasprite tile data into VRAM
     set_sprite_data(BIRD_TILE_NUM_START, sizeof(bird_data) >> 4, bird_data);
 
     // Load food metasprites tile data into VRAM
-    set_sprite_data(BIRD_TILE_NUM_START + sizeof(bird_data) >> 4, sizeof(food_data) >> 4, food_data);
+    set_sprite_data(FOOD_TILE_NUM_START, sizeof(food_data) >> 4, food_data);
 
     // Show background and sprites
-    SHOW_BKG; SHOW_SPRITES;
+    SHOW_BKG; SHOW_WIN; SHOW_SPRITES;
     
     // Use 8x8 sprites/tiles
     SPRITES_8x8;
@@ -119,9 +143,17 @@ void main() {
     posX = posY = 64 << 4;
     speedX = INITIAL_SPEED_X;
     speedY = INITIAL_SPEED_Y;
+    scrollY = 0;
     charSpriteIdx = BIRD_SPRITE_GLIDING;
+    score = 0;
 
-    while(1) {        
+    while(1) {
+        // Store previous values
+        int16_t prevX = posX;
+        int16_t prevY = posY;
+        uint8_t prevScrollY = scrollY;
+        uint16_t prevScore = score;
+
         // Poll joypad
         prevJoypads = joypads;
         joypad_ex(&joypads);
@@ -190,7 +222,6 @@ void main() {
                 if (abs(speedX) < MAX_SPEED_X) {
                     speedX = speedX > 0 ? speedX + 4 : speedX - 4;
                 }
-                // TODO Handle collision (hurt enemies ???)
                 // Go back to gliding when DOWN button is released
                 if (released & J_DOWN) {
                     charStatus = GLIDING;
@@ -207,12 +238,15 @@ void main() {
         // Move character
         posX += speedX;
         posY += speedY;
+        uint8_t redraw = (prevX >> 4) != (posX >> 4) || (prevY >> 4) != (posY >> 4);
 
         // Automatic U-turn
         if ((posX >> 4) < MIN_POS_X && speedX < 0) {
             speedX = INITIAL_SPEED_X;
+            redraw = 1;
         } else if ((posX >> 4) > MAX_POS_X && speedX > 0) {
             speedX = -INITIAL_SPEED_X;
+            redraw = 1;
         }
         // Automatic flapping
         if ((posY >> 4) > MAX_POS_Y && speedY > 0 && charStatus != FLAPPING) {
@@ -226,53 +260,67 @@ void main() {
         }
 
         // Scroll background
-        uint8_t scrollY = 0;
         if ((posY >> 4) > 144/2) {
             scrollY = (posY >> 4) - (144/2);
+        } else {
+            scrollY = 0;
         }
-        move_bkg(0, scrollY);
+        if (scrollY != prevScrollY) {
+            move_bkg(0, scrollY);
+        }
 
         uint8_t hiwater = 0;
         // FIXME Should only be called when something changed --> Character moved or changed direction or animation frame changed
-        rot = speedX > 0;
-        switch (rot) {
-            case 0: hiwater = move_metasprite       (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
-            case 1: hiwater = move_metasprite_vflip (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
-        };
+        if (redraw) {
+            switch (speedX > 0) {
+                case 0: hiwater = move_metasprite       (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
+                case 1: hiwater = move_metasprite_vflip (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
+            };
+            // Hide rest of the hardware sprites, because amount of sprites differs between animation frames. Max sprites used by bird metasprite is 4.
+            for (uint8_t i = hiwater; i < 4; i++) shadow_OAM[i].y = 0;
+        }
 
-        // Hide rest of the hardware sprites, because amount of sprites differs between animation frames.
-        for (uint8_t i = hiwater; i < 40; i++) shadow_OAM[i].y = 0;
-
-        // TODO Spawn food randomly
+        // Spawn food randomly
         int8_t availableSlot = nextAvailableFoodSlot();
         if (availableSlot != -1 && rand() > 120) {  // FIXME Need to initialize randomizer with seed (for instance when the player presses start button on the title screen)
             food[availableSlot].enabled = 1;
-            // TODO random position, speed, food type (sprite offset), value, ...
+            // TODO Random food type (sprite offset, value, speed range, sound fx, ...)
             food[availableSlot].spriteOffset = 0;
             food[availableSlot].spriteIdx = 0;
             food[availableSlot].animationLastFrame = frame;
-            food[availableSlot].posX = 80 << 4;
-            food[availableSlot].posY = 80 << 4;
-            food[availableSlot].speedX = 4;
-            food[availableSlot].speedY = 2;
+            int8_t direction = rand() > 0;
+            food[availableSlot].posX = (direction > 0) ? (168 << 4) : (0 << 4);
+            food[availableSlot].posY = abs(rand()) << 4;
+            food[availableSlot].speedX = (direction > 0) ? (-1 -(abs(rand()) / 32)) : (1 + (abs(rand()) / 32));
+            food[availableSlot].speedY = rand() / 32;
             food[availableSlot].value = 10;
         }
 
-        for (int slot=0; slot<16; slot++) {
+        for (int slot=0; slot<MAX_FOOD; slot++) {
             if (food[slot].enabled != 0) {
                 // TODO Speed changes ???
                 // Food movements
+                int16_t foodPrevX = food[slot].posX;
+                int16_t foodPrevY = food[slot].posY;
                 food[slot].posX += food[slot].speedX;
                 food[slot].posY += food[slot].speedY;
+                uint8_t redraw = (foodPrevX >> 4) != (food[slot].posX >> 4) || (foodPrevY >> 4) != (food[slot].posY >> 4);
 
                 // Destroy food when out of screen or caught by the character
                 if (collideWithChar(food[slot].posX, food[slot].posY)) {
                     food[slot].enabled = 0;
-                    // FIXME score += food[slot].value;
-                } else if ((food[slot].posX >> 4) < -20 && food[slot].speedX < 0) {
+                    shadow_OAM[FOOD_SPR_NUM_START + 2*slot].y = 0;
+                    shadow_OAM[FOOD_SPR_NUM_START + 2*slot + 1].y = 0;
+                    score += food[slot].value;
+                    continue;
+                } else if (((food[slot].posX >> 4) <= 0 && food[slot].speedX < 0)
+                            || ((food[slot].posX >> 4) >= 168 && food[slot].speedX > 0)
+                            || ((food[slot].posY >> 4) <= 0 && food[slot].speedY < 0)
+                            || ((food[slot].posY >> 4) >= 232 && food[slot].speedY > 0)) {   // Max scrollY is 72
                     food[slot].enabled = 0;
-                } else if ((food[slot].posX >> 4) > 180 && food[slot].speedX > 0) {
-                    food[slot].enabled = 0;
+                    shadow_OAM[FOOD_SPR_NUM_START + 2*slot].y = 0;
+                    shadow_OAM[FOOD_SPR_NUM_START + 2*slot + 1].y = 0;
+                    continue;
                 }
 
                 // Display and animate food sprites
@@ -282,10 +330,36 @@ void main() {
                     if (food[slot].spriteIdx > 2) {    // FIXME animation frames number ???
                         food[slot].spriteIdx = 0;
                     }
+                    redraw = 1;
                 }
-                move_metasprite(food_metasprites[food[slot].spriteOffset + food[slot].spriteIdx], BIRD_TILE_NUM_START + sizeof(bird_data) >> 4 + food[slot].spriteOffset, BIRD_SPR_NUM_START + 4, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY);
-            } // FIXME Otherwise hide metasprites ???
+                // TODO Redraw only when required (sprite changed, position changed, scroll changed)
+                if (redraw || (scrollY != prevScrollY)) {   // FIXME Also redraw if scrollY changed!!!
+                    // FIXME Metasprite not working on real hardware ??? (character metasprite should be using the first 4 hardware sprites)
+                    //move_metasprite(food_metasprites[food[slot].spriteOffset + food[slot].spriteIdx], FOOD_TILE_NUM_START + food[slot].spriteOffset, FOOD_SPR_NUM_START + 2*slot, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY);
+                    set_sprite_tile(FOOD_SPR_NUM_START + 2*slot, FOOD_TILE_NUM_START + food[slot].spriteOffset + food[slot].spriteIdx*2);
+                    move_sprite(FOOD_SPR_NUM_START + 2*slot, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY);
+                    set_sprite_tile(FOOD_SPR_NUM_START + 2*slot + 1, FOOD_TILE_NUM_START + food[slot].spriteOffset + food[slot].spriteIdx*2 + 1);
+                    move_sprite(FOOD_SPR_NUM_START + 2*slot + 1, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY + 8);
+                }
+            }
         }
+
+        // Print score in window layer
+        if (score != prevScore) {
+            const char scoreStr[6];
+            sprintf(scoreStr, "%5d", score);
+            // Pad score with zeros
+            int c = -1;
+            while(scoreStr[++c] != '\0');
+            for (int ch=0; ch<(5-c); ch++) {
+                scoreTiles[ch] = sky_tiles_count;
+            }
+            for (int ch=(5-c); ch<5; ch++) {
+                scoreTiles[ch] = sky_tiles_count + scoreStr[ch-(5-c)] - 0x30;
+            }
+            set_win_tiles(14, 0, 5, 1, scoreTiles);
+        }
+
 
         // Wait for VBlank
         wait_vbl_done();
