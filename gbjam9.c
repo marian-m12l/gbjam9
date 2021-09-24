@@ -118,6 +118,12 @@ food_t food[MAX_FOOD];
 
 void initScreen() {
     DISPLAY_OFF;
+
+    // Init palettes
+    BGP_REG = 0xE4;     // BG Palette : Black, Dark gray, Light gray, White
+    OBP0_REG = 0xE4;    // Sprite palette 0 : Black, Dark gray, Light gray, Transparent
+    OBP1_REG = 0xE0;    // Sprite palette 1 : Black, Dark gray, White, Transparent
+
     switch (screen) {
         case TITLE_SCREEN: {
             // Background tilemap
@@ -357,7 +363,9 @@ void instructionsScreen() {
 
     // Display game duration setting
     set_sprite_tile(0, countdownSetting);
-    move_sprite(0, 69, 112);
+    if (frame == 0) {   // Move only once
+        move_sprite(0, 69, 112);
+    }
 
     frame++;
 }
@@ -540,7 +548,7 @@ void gameScreen() {
             int16_t foodPrevY = food[slot].posY;
             food[slot].posX += food[slot].speedX;
             food[slot].posY += food[slot].speedY;
-            uint8_t redraw = (foodPrevX >> 4) != (food[slot].posX >> 4) || (foodPrevY >> 4) != (food[slot].posY >> 4);
+            uint8_t moved = (foodPrevX >> 4) != (food[slot].posX >> 4) || (foodPrevY >> 4) != (food[slot].posY >> 4) || (scrollY != prevScrollY);
 
             // Destroy food when out of screen or caught by the character
             if (collideWithChar(food[slot].posX, food[slot].posY)) {
@@ -560,22 +568,27 @@ void gameScreen() {
             }
 
             // Display and animate food sprites
+            uint8_t animated = 0;
             if (frame - food[slot].animationLastFrame > 15) {
                 food[slot].animationLastFrame = frame;
                 food[slot].spriteIdx++;
                 if (food[slot].spriteIdx > 2) {    // FIXME animation frames number ???
                     food[slot].spriteIdx = 0;
                 }
-                redraw = 1;
+                animated = 1;
             }
             // Redraw only when required (sprite changed, position changed, scroll changed)
-            if (redraw || (scrollY != prevScrollY)) {
+            if (moved || animated) {
                 // FIXME Metasprite not working on real hardware ??? (character metasprite should be using the first 4 hardware sprites)
                 //move_metasprite(food_metasprites[food[slot].spriteOffset + food[slot].spriteIdx], FOOD_TILE_NUM_START + food[slot].spriteOffset, FOOD_SPR_NUM_START + 2*slot, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY);
-                set_sprite_tile(FOOD_SPR_NUM_START + 2*slot, FOOD_TILE_NUM_START + food[slot].spriteOffset + food[slot].spriteIdx*2);
-                move_sprite(FOOD_SPR_NUM_START + 2*slot, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY);
-                set_sprite_tile(FOOD_SPR_NUM_START + 2*slot + 1, FOOD_TILE_NUM_START + food[slot].spriteOffset + food[slot].spriteIdx*2 + 1);
-                move_sprite(FOOD_SPR_NUM_START + 2*slot + 1, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY + 8);
+                if (animated) {
+                    set_sprite_tile(FOOD_SPR_NUM_START + 2*slot, FOOD_TILE_NUM_START + food[slot].spriteOffset + food[slot].spriteIdx*2);
+                    set_sprite_tile(FOOD_SPR_NUM_START + 2*slot + 1, FOOD_TILE_NUM_START + food[slot].spriteOffset + food[slot].spriteIdx*2 + 1);
+                }
+                if (moved) {
+                    move_sprite(FOOD_SPR_NUM_START + 2*slot, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY);
+                    move_sprite(FOOD_SPR_NUM_START + 2*slot + 1, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY + 8);
+                }
             }
         }
     }
@@ -605,6 +618,31 @@ void gameScreen() {
     // Print countdown in window layer
     if (countdown != prevCountdown || countdown == (countdownSetting * 60)) {
         printInWindowHeader(countdownTiles, 1, 3, countdown);
+    }
+
+    // Show countdown and blink palette 0 during the last 9 seconds
+    if (countdown < 10) {
+        if (vblanks < 10) {
+            OBP0_REG = 0xE4;
+        } else if (vblanks < 20) {
+            OBP0_REG = 0x90;
+        } else if (vblanks < 30) {
+            OBP0_REG = 0x40;
+        } else if (vblanks < 40) {
+            OBP0_REG = 0x00;
+        } else if (vblanks < 50) {
+            OBP0_REG = 0x40;
+        } else if (vblanks < 60) {
+            OBP0_REG = 0x90;
+        } else {
+            OBP0_REG = 0xE4;
+        }
+        if (countdown != prevCountdown) {
+            set_sprite_tile(39, sky_tiles_count + countdown);
+            if (countdown == 9) {   // Move only once
+                move_sprite(39, 84, 28);
+            }
+        }
     }
 
     #if SHOW_FPS
@@ -644,10 +682,6 @@ void vblank_isr() {
 
 
 void main() {
-    // Init palettes
-    BGP_REG = 0xE4;     // BG Palette : Black, Dark gray, Light gray, White
-    OBP0_REG = 0xE4;    // Sprite palette 0 : Black, Dark gray, Light gray, Transparent
-    OBP1_REG = 0xE0;    // Sprite palette 1 : Black, Dark gray, White, Transparent
 
     CRITICAL {
         STAT_REG = 0x10;    // Enable VBlank interrupt
