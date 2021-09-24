@@ -63,6 +63,7 @@
 
 joypads_t joypads, prevJoypads;
 uint64_t frame = 0;
+uint64_t lastInputFrame = 0;
 uint8_t vblanks = 0;
 #if SHOW_FPS
     uint64_t lastVBlankFrame = 0;
@@ -236,6 +237,7 @@ void initScreen() {
             score = 0;
             countdown = countdownSetting * 60;
             frame = 0;
+            lastInputFrame = 0;
             vblanks = 0;
             paused = 0;
             for (int slot=0; slot<MAX_FOOD; slot++) {
@@ -416,6 +418,10 @@ void gameScreen() {
     if (paused) {
         return;
     }
+
+    if (pressed || pushed) {
+        lastInputFrame = frame;
+    }
     
     // Switch direction, but speed stays constant
     // Speed is slowed down when making a U-turn
@@ -553,7 +559,7 @@ void gameScreen() {
         food[availableSlot].speedX = (direction > 0) ? (-1 -(abs(rand()) >> 5)) : (1 + (abs(rand()) >> 5));
         if (type == BERRY)  food[availableSlot].speedX *= 4;
         food[availableSlot].speedY = (type == BERRY) ? (-20 -(abs(rand()) >> 3)) : rand() >> 5;
-        food[availableSlot].value = (type == BERRY) ? 50 : 10;
+        food[availableSlot].value = (type == BERRY) ? 80 : 10;
         // Play a sound effect on berry appearance
         if (type == BERRY) {
             NR10_REG = 0xb7;    // Channel 1 Sweep: Time 3/128Hz, Freq increases, Shift 7
@@ -583,7 +589,8 @@ void gameScreen() {
                 food[slot].enabled = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot].y = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot + 1].y = 0;
-                score += food[slot].value;
+                // Score increases when inputs were not used since many frames
+                score += food[slot].value + ((frame - lastInputFrame) >> 1);
                 // Play sound effect
                 NR10_REG = 0x34;    // Channel 1 Sweep: Time 3/128Hz, Freq increases, Shift 4
                 NR11_REG = (food[slot].type == BERRY) ? 0x80 : 0x40;    // Channel 1 Wave Pattern and Sound Length: Duty 50% or 25%, Length 1/4 s
