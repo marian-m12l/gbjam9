@@ -14,8 +14,13 @@
 #include "tilesets/instructions_map.h"
 #include "tilesets/sky_tiles.h"
 #include "tilesets/sky_map.h"
+#include "tilesets/winning_tiles.h"
+#include "tilesets/winning_map.h"
 #include "tilesets/font_tiles.h"
 #include "tilesets/pause_tiles.h"
+
+
+#define SHOW_FPS 0
 
 
 // Pause sprite tiles are loaded into VRAM
@@ -54,8 +59,15 @@
 // Food metasprite will be built starting with hardware sprite 9 (after character sprites)
 #define FOOD_SPR_NUM_START (BIRD_SPR_NUM_START + 4)
 
+#define INITIAL_COUNTDOWN_SETTING 3
+
 joypads_t joypads, prevJoypads;
 uint64_t frame = 0;
+uint8_t vblanks = 0;
+#if SHOW_FPS
+    uint64_t lastVBlankFrame = 0;
+    uint8_t fps = 0;
+#endif
 uint8_t paused = 0;
 
 // Screens state machine
@@ -68,13 +80,19 @@ typedef enum screen_t {
 screen_t screen = TITLE_SCREEN;
 
 // Character position
-int16_t posX, posY;
-int16_t speedX, speedY;
-uint8_t scrollY;
-uint8_t charSpriteIdx;
-uint64_t animationLastFrame;
-uint32_t score;
+int16_t posX = 0, posY = 0;
+int16_t speedX = 0, speedY = 0;
+uint8_t scrollY = 0;
+uint8_t charSpriteIdx = 0;
+uint64_t animationLastFrame = 0;
+uint32_t score = 0;
 uint8_t scoreTiles[5] = { sky_tiles_count, sky_tiles_count, sky_tiles_count, sky_tiles_count, sky_tiles_count };
+uint8_t countdownSetting = 0;
+uint16_t countdown = 0;
+uint8_t countdownTiles[3] = { sky_tiles_count, sky_tiles_count, sky_tiles_count };
+#if SHOW_FPS
+    uint8_t fpsTiles[2] = { sky_tiles_count, sky_tiles_count };
+#endif
 
 // State machine
 typedef enum status_t {
@@ -115,6 +133,9 @@ void initScreen() {
             const unsigned char startTiles[5] = { title_tiles_count + 14, title_tiles_count + 15, title_tiles_count + 16, title_tiles_count + 12, title_tiles_count + 15 };
             set_bkg_tiles(3, 14, 5, 1, startTiles);
 
+            // Reset background scroll
+            move_bkg(0, 0);
+
             // Show background
             SHOW_BKG; HIDE_WIN; HIDE_SPRITES;
         
@@ -127,10 +148,27 @@ void initScreen() {
             set_bkg_data(0, instructions_tiles_count, instructions_tiles);
             set_bkg_tiles(0, 0, instructions_map_width, instructions_map_height, instructions_map);
 
-            // Show background
-            SHOW_BKG; HIDE_WIN; HIDE_SPRITES;
+            // Font tiles
+            set_sprite_data(0, font_tiles_count, font_tiles);
+
+            // Reset background scroll
+            move_bkg(0, 0);
+
+            // Reset hardware sprites
+            for (uint8_t i = 0; i < 40; i++) {
+                shadow_OAM[i].y = 0;
+            }
+
+            // Show background and sprites
+            SHOW_BKG; HIDE_WIN; SHOW_SPRITES;
+            
+            // Use 8x8 sprites/tiles
+            SPRITES_8x8;
         
             // Set initial state
+            if (countdownSetting == 0) {
+                countdownSetting = INITIAL_COUNTDOWN_SETTING;
+            }
             frame = 0;
             break;
         }
@@ -142,6 +180,10 @@ void initScreen() {
             // HUD
             set_win_data(sky_tiles_count, font_tiles_count, font_tiles);
             set_win_tiles(14, 0, 5, 1, scoreTiles);
+            set_win_tiles(1, 0, 3, 1, countdownTiles);
+            #if SHOW_FPS
+                set_win_tiles(9, 0, 2, 1, fpsTiles);
+            #endif
             move_win(7, 136);
 
             // Load character metasprite tile data into VRAM
@@ -152,6 +194,14 @@ void initScreen() {
 
             // Load pause sprites tile data into VRAM
             set_sprite_data(PAUSE_TILE_NUM_START, pause_tiles_count, pause_tiles);
+
+            // Reset background scroll
+            move_bkg(0, 0);
+
+            // Reset hardware sprites
+            for (uint8_t i = 0; i < 40; i++) {
+                shadow_OAM[i].y = 0;
+            }
 
             // Show background, window and sprites
             SHOW_BKG; SHOW_WIN; SHOW_SPRITES;
@@ -166,11 +216,44 @@ void initScreen() {
             scrollY = 0;
             charSpriteIdx = BIRD_SPRITE_GLIDING;
             score = 0;
+            countdown = countdownSetting * 60;
             frame = 0;
+            vblanks = 0;
             paused = 0;
+            for (int slot=0; slot<MAX_FOOD; slot++) {
+                food[slot].enabled = 0;
+            }
             break;
         }
         case WINNING_SCREEN: {
+            // Background tilemap
+            set_bkg_data(0, winning_tiles_count, winning_tiles);
+            set_bkg_tiles(0, 0, winning_map_width, winning_map_height, winning_map);
+
+            // Font tiles
+            set_bkg_data(winning_tiles_count, font_tiles_count, font_tiles);
+
+            // Score
+            unsigned char finalScoreTiles[5] = { winning_tiles_count, winning_tiles_count, winning_tiles_count, winning_tiles_count, winning_tiles_count };
+            const char str[6];  // Maximum 5 characters + null terminator
+            sprintf(str, "%d", score);
+            // Pad with zeros
+            int c = -1;
+            while(str[++c] != '\0');
+            for (int ch=0; ch<(5-c); ch++) {
+                finalScoreTiles[ch] = winning_tiles_count;
+            }
+            for (int ch=(5-c); ch<5; ch++) {
+                finalScoreTiles[ch] = winning_tiles_count + str[ch-(5-c)] - 0x30;
+            }
+            set_bkg_tiles(5, 14, 5, 1, finalScoreTiles);
+
+            // Reset background scroll
+            move_bkg(0, 0);
+
+            // Show background
+            SHOW_BKG; HIDE_WIN; HIDE_SPRITES;
+        
             // Set initial state
             frame = 0;
             break;
@@ -208,18 +291,34 @@ uint8_t collideWithChar(int16_t foodPosX, int16_t foodPosY) {
     return (foodX < (charX + 16) && (foodX + 8) > charX && foodY < (charY + 16) && (foodY + 8) > charY);
 }
 
+void printInWindowHeader(uint8_t* tiles, uint8_t x, uint8_t characters, uint32_t value) {
+    const char str[6];  // Maximum 5 characters + null terminator
+    sprintf(str, "%d", value);
+    // Pad with zeros
+    int c = -1;
+    while(str[++c] != '\0');
+    for (int ch=0; ch<(characters-c); ch++) {
+        tiles[ch] = sky_tiles_count;
+    }
+    for (int ch=(characters-c); ch<characters; ch++) {
+        tiles[ch] = sky_tiles_count + str[ch-(characters-c)] - 0x30;
+    }
+    set_win_tiles(x, 0, characters, 1, tiles);
+}
+
 
 void titleScreen() {
     // Poll joypad
     prevJoypads = joypads;
     joypad_ex(&joypads);
     uint8_t pressed = justPressed();
-    uint8_t pushed = joypads.joy0;
-    uint8_t released = justReleased();
+    //uint8_t pushed = joypads.joy0;
+    //uint8_t released = justReleased();
 
-    if ((pressed & J_START)) {
+    if (frame >= 30 && (pressed & J_START)) {
         screen = INSTRUCTIONS_SCREEN;   // FIXME Transition
         initScreen();
+        return;
     }
 
     // TODO Blink press start ???
@@ -233,13 +332,32 @@ void instructionsScreen() {
     prevJoypads = joypads;
     joypad_ex(&joypads);
     uint8_t pressed = justPressed();
-    uint8_t pushed = joypads.joy0;
-    uint8_t released = justReleased();
+    //uint8_t pushed = joypads.joy0;
+    //uint8_t released = justReleased();
 
-    if (pressed) {
+    // D-pad sets game duration
+    if ((pressed & J_LEFT) || (pressed & J_DOWN)) {
+        countdownSetting--;
+        if (countdownSetting < 1) {
+            countdownSetting = 1;
+        }
+    } else if ((pressed & J_RIGHT) || (pressed & J_UP)) {
+        countdownSetting++;
+        if (countdownSetting > 9) {
+            countdownSetting = 9;
+        }
+    }
+
+    // Start, A, or B goes to the game screen
+    if (frame >= 30 && ((pressed & J_START) || (pressed & J_A) || (pressed & J_B))) {
         screen = GAME_SCREEN;   // FIXME Transition
         initScreen();
+        return;
     }
+
+    // Display game duration setting
+    set_sprite_tile(0, countdownSetting);
+    move_sprite(0, 69, 112);
 
     frame++;
 }
@@ -257,7 +375,8 @@ void gameScreen() {
     int16_t prevX = posX;
     int16_t prevY = posY;
     uint8_t prevScrollY = scrollY;
-    uint16_t prevScore = score;
+    uint32_t prevScore = score;
+    uint16_t prevCountdown = countdown;
 
     if (pressed & J_START) {
         if (paused) {
@@ -388,7 +507,6 @@ void gameScreen() {
     }
 
     uint8_t hiwater = 0;
-    // FIXME Should only be called when something changed --> Character moved or changed direction or animation frame changed
     if (redraw) {
         switch (speedX > 0) {
             case 0: hiwater = move_metasprite       (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
@@ -450,8 +568,8 @@ void gameScreen() {
                 }
                 redraw = 1;
             }
-            // TODO Redraw only when required (sprite changed, position changed, scroll changed)
-            if (redraw || (scrollY != prevScrollY)) {   // FIXME Also redraw if scrollY changed!!!
+            // Redraw only when required (sprite changed, position changed, scroll changed)
+            if (redraw || (scrollY != prevScrollY)) {
                 // FIXME Metasprite not working on real hardware ??? (character metasprite should be using the first 4 hardware sprites)
                 //move_metasprite(food_metasprites[food[slot].spriteOffset + food[slot].spriteIdx], FOOD_TILE_NUM_START + food[slot].spriteOffset, FOOD_SPR_NUM_START + 2*slot, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY);
                 set_sprite_tile(FOOD_SPR_NUM_START + 2*slot, FOOD_TILE_NUM_START + food[slot].spriteOffset + food[slot].spriteIdx*2);
@@ -463,27 +581,65 @@ void gameScreen() {
     }
 
     // Print score in window layer
-    if (score != prevScore) {
-        const char scoreStr[6];
-        sprintf(scoreStr, "%5d", score);
-        // Pad score with zeros
-        int c = -1;
-        while(scoreStr[++c] != '\0');
-        for (int ch=0; ch<(5-c); ch++) {
-            scoreTiles[ch] = sky_tiles_count;
-        }
-        for (int ch=(5-c); ch<5; ch++) {
-            scoreTiles[ch] = sky_tiles_count + scoreStr[ch-(5-c)] - 0x30;
-        }
-        set_win_tiles(14, 0, 5, 1, scoreTiles);
+    if (score != prevScore || score == 0) {
+        printInWindowHeader(scoreTiles, 14, 5, score);
     }
+
+    // Update countdown
+    if (vblanks >= 60) {
+        vblanks = 0;
+        countdown--;
+        #if SHOW_FPS
+            // Compute FPS
+            fps = frame - lastVBlankFrame;
+            lastVBlankFrame = frame;
+        #endif
+        // Handle end of countdown / game
+        if (countdown == 0) {
+            screen = WINNING_SCREEN;    // FIXME Transition
+            initScreen();
+            return;
+        }
+    }
+
+    // Print countdown in window layer
+    if (countdown != prevCountdown || countdown == (countdownSetting * 60)) {
+        printInWindowHeader(countdownTiles, 1, 3, countdown);
+    }
+
+    #if SHOW_FPS
+        // Print FPS in window layer
+        if (lastVBlankFrame == frame) {
+            printInWindowHeader(fpsTiles, 9, 2, fps);
+        }
+    #endif
 
     frame++;
 }
 
 
 void winningScreen() {
+    // Poll joypad
+    prevJoypads = joypads;
+    joypad_ex(&joypads);
+    uint8_t pressed = justPressed();
+    //uint8_t pushed = joypads.joy0;
+    //uint8_t released = justReleased();
+
+    if (frame >= 60 && pressed) {
+        screen = TITLE_SCREEN;   // FIXME Transition
+        initScreen();
+        return;
+    }
+
     frame++;
+}
+
+
+void vblank_isr() {
+    if (!paused) {
+        vblanks++;
+    }
 }
 
 
@@ -492,6 +648,12 @@ void main() {
     BGP_REG = 0xE4;     // BG Palette : Black, Dark gray, Light gray, White
     OBP0_REG = 0xE4;    // Sprite palette 0 : Black, Dark gray, Light gray, Transparent
     OBP1_REG = 0xE0;    // Sprite palette 1 : Black, Dark gray, White, Transparent
+
+    CRITICAL {
+        STAT_REG = 0x10;    // Enable VBlank interrupt
+        add_VBL(vblank_isr);
+    }
+    set_interrupts(VBL_IFLAG);
 
     initScreen();
 
