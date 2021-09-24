@@ -214,6 +214,11 @@ void initScreen() {
             
             // Use 8x8 sprites/tiles
             SPRITES_8x8;
+
+            // Enable sound
+            NR52_REG = 0x80; // All sound channels ON
+            NR50_REG = 0x77; // Max volume on L/R outputs
+            NR51_REG = 0xFF; // All 4 channels to both L/R outputs
         
             // Set initial state
             posX = posY = 64 << 4;
@@ -556,6 +561,12 @@ void gameScreen() {
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot].y = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot + 1].y = 0;
                 score += food[slot].value;
+                // Play sound effect
+                NR10_REG = 0x34;    // Channel 1 Sweep: Time 3/128Hz, Freq increases, Shift 4
+                NR11_REG = 0x40;    // Channel 1 Wave Pattern and Sound Length: Duty 25%, Length 1/4 s
+                NR12_REG = 0x83;    // Channel 1 Volume Envelope: Initial 8, Volume decreases, Steps 3
+                NR13_REG = 0x00;    // Channel 1 Frequency LSB: (Part of) Freq 1280 Hz
+                NR14_REG = 0xc5;    // Channel 1 Frequency MSB: No Repeat, (Part of) Freq 1280 Hz
                 continue;
             } else if (((food[slot].posX >> 4) <= 0 && food[slot].speedX < 0)
                         || ((food[slot].posX >> 4) >= 168 && food[slot].speedX > 0)
