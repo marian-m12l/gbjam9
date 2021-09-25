@@ -82,6 +82,7 @@ screen_t screen = TITLE_SCREEN;
 
 // Character position
 int16_t posX = 0, posY = 0;
+int16_t pixelPosX = 0, pixelPosY = 0;
 int16_t speedX = 0, speedY = 0;
 uint8_t scrollY = 0;
 uint8_t charSpriteIdx = 0;
@@ -118,6 +119,7 @@ typedef struct food_t {
     uint8_t spriteIdx;
     uint16_t animationLastFrame;
     int16_t posX, posY;
+    int16_t pixelPosX, pixelPosY;
     int16_t speedX, speedY;
     int8_t value;
 } food_t;
@@ -230,6 +232,7 @@ void initScreen() {
         
             // Set initial state
             posX = posY = 64 << 4;
+            pixelPosX = pixelPosY = 64;
             speedX = INITIAL_SPEED_X;
             speedY = INITIAL_SPEED_Y;
             scrollY = 0;
@@ -304,13 +307,12 @@ int8_t nextAvailableFoodSlot() {
     else return -1;
 }
 
-uint8_t collideWithChar(int16_t foodPosX, int16_t foodPosY, uint8_t foodSpriteHeight) {
+uint8_t collideWithChar(int16_t foodPixelPosX, int16_t foodPixelPosY, uint8_t foodSpriteHeight) {
     // Metasprite origin is the pivot point
-    int16_t charX = (posX >> 4) - bird_PIVOT_X;
-    int16_t charY = (posY >> 4) - bird_PIVOT_Y;
-    int16_t foodX = (foodPosX >> 4);
-    int16_t foodY = (foodPosY >> 4) - scrollY;  // Need to account for background scroll
-    return (foodX < (charX + 16) && (foodX + 8) > charX && foodY < (charY + 16) && (foodY + 8*foodSpriteHeight) > charY);
+    int16_t charX = pixelPosX - bird_PIVOT_X;
+    int16_t charY = pixelPosY - bird_PIVOT_Y;
+    int16_t foodY = foodPixelPosY - scrollY;  // Need to account for background scroll
+    return (foodPixelPosX < (charX + 16) && (foodPixelPosX + 8) > charX && foodY < (charY + 16) && (foodY + 8*foodSpriteHeight) > charY);
 }
 
 void printInWindowHeader(uint8_t* tiles, uint8_t x, uint8_t characters, uint32_t value) {
@@ -396,8 +398,8 @@ void gameScreen() {
     uint8_t released = justReleased();
 
     // Store previous values
-    int16_t prevX = posX;
-    int16_t prevY = posY;
+    int16_t prevPixelPosX = pixelPosX;
+    int16_t prevPixelPosY = pixelPosY;
     uint8_t prevScrollY = scrollY;
     uint32_t prevScore = score;
     uint16_t prevCountdown = countdown;
@@ -426,8 +428,7 @@ void gameScreen() {
         lastInputFrame = frame;
     }
     
-    // Switch direction, but speed stays constant
-    // Speed is slowed down when making a U-turn
+    // Switch direction, speed is slowed down
     if ((pressed & J_LEFT) && speedX > 0) {
         speedX = -INITIAL_SPEED_X;
     } else if ((pressed & J_RIGHT) && speedX < 0) {
@@ -503,30 +504,32 @@ void gameScreen() {
     // Move character
     posX += speedX;
     posY += speedY;
-    uint8_t redraw = (prevX >> 4) != (posX >> 4) || (prevY >> 4) != (posY >> 4);
+    pixelPosX = posX >> 4;
+    pixelPosY = posY >> 4;
+    uint8_t redraw = prevPixelPosX != pixelPosX || prevPixelPosY != pixelPosY;
 
     // Automatic U-turn
-    if ((posX >> 4) < MIN_POS_X && speedX < 0) {
+    if (pixelPosX < MIN_POS_X && speedX < 0) {
         speedX = INITIAL_SPEED_X;
         redraw = 1;
-    } else if ((posX >> 4) > MAX_POS_X && speedX > 0) {
+    } else if (pixelPosX > MAX_POS_X && speedX > 0) {
         speedX = -INITIAL_SPEED_X;
         redraw = 1;
     }
     // Automatic flapping
-    if ((posY >> 4) > MAX_POS_Y && speedY > 0 && charStatus != FLAPPING) {
+    if (pixelPosY > MAX_POS_Y && speedY > 0 && charStatus != FLAPPING) {
         // Push upwards
         speedY += SPEED_Y_BOOST_FLAPPING;
         charStatus = FLAPPING;
     }
     // Upper border capping
-    if ((posY >> 4) < MIN_POS_Y) {
+    if (pixelPosY < MIN_POS_Y) {
         posY = MIN_POS_Y << 4;
     }
 
     // Scroll background
-    if ((posY >> 4) > 144/2) {
-        scrollY = (posY >> 4) - (144/2);
+    if (pixelPosY > 72) {
+        scrollY = pixelPosY - 72;
     } else {
         scrollY = 0;
     }
@@ -537,8 +540,8 @@ void gameScreen() {
     uint8_t hiwater = 0;
     if (redraw) {
         switch (speedX > 0) {
-            case 0: hiwater = move_metasprite       (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
-            case 1: hiwater = move_metasprite_vflip (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, (posX >> 4), (posY >> 4)); break;
+            case 0: hiwater = move_metasprite       (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, pixelPosX, pixelPosY); break;
+            case 1: hiwater = move_metasprite_vflip (bird_metasprites[charSpriteIdx], BIRD_TILE_NUM_START, BIRD_SPR_NUM_START, pixelPosX, pixelPosY); break;
         };
         // Hide rest of the hardware sprites, because amount of sprites differs between animation frames. Max sprites used by bird metasprite is 4.
         for (uint8_t i = hiwater; i < 4; i++) shadow_OAM[BIRD_SPR_NUM_START+i].y = 0;
@@ -546,7 +549,7 @@ void gameScreen() {
 
     // Spawn food randomly
     int8_t availableSlot = nextAvailableFoodSlot();
-    if (availableSlot != -1 && rand() > 120) {  // FIXME Need to initialize randomizer with seed (for instance when the player presses start button on the title screen)
+    if (availableSlot != -1 && rand() > 120) {
         food[availableSlot].enabled = 1;
         // Random food type (defines sprite offset, value, speed range, sound fx, ...)
         food_type_t type = (rand() < -110) ? BERRY : DANDELION;    // Around 1 berry every 15 dandelions
@@ -557,8 +560,10 @@ void gameScreen() {
         food[availableSlot].spriteIdx = 0;
         food[availableSlot].animationLastFrame = frame;
         int8_t direction = rand() > 0;
-        food[availableSlot].posX = (direction > 0) ? (168 << 4) : (0 << 4);
-        food[availableSlot].posY = (type == BERRY) ? (232 << 4) : abs(rand()) << 4;
+        food[availableSlot].pixelPosX = (direction > 0) ? 168 : 0;
+        food[availableSlot].posX = food[availableSlot].pixelPosX << 4;
+        food[availableSlot].pixelPosY = (type == BERRY) ? 232 : abs(rand());
+        food[availableSlot].posY = food[availableSlot].pixelPosY << 4;
         food[availableSlot].speedX = (direction > 0) ? (-1 -(abs(rand()) >> 5)) : (1 + (abs(rand()) >> 5));
         if (type == BERRY)  food[availableSlot].speedX *= 4;
         food[availableSlot].speedY = (type == BERRY) ? (-20 -(abs(rand()) >> 3)) : rand() >> 5;
@@ -581,14 +586,16 @@ void gameScreen() {
                 food[slot].speedY += 1;
             }
             // Food movements
-            int16_t foodPrevX = food[slot].posX;
-            int16_t foodPrevY = food[slot].posY;
+            int16_t foodPrevPixelPosX = food[slot].pixelPosX;
+            int16_t foodPrevPixelPosY = food[slot].pixelPosY;
             food[slot].posX += food[slot].speedX;
             food[slot].posY += food[slot].speedY;
-            uint8_t moved = (foodPrevX >> 4) != (food[slot].posX >> 4) || (foodPrevY >> 4) != (food[slot].posY >> 4) || (scrollY != prevScrollY);
+            food[slot].pixelPosX = food[slot].posX >> 4;
+            food[slot].pixelPosY = food[slot].posY >> 4;
+            uint8_t moved = foodPrevPixelPosX != food[slot].pixelPosX || foodPrevPixelPosY != food[slot].pixelPosY || (scrollY != prevScrollY);
 
             // Destroy food when out of screen or caught by the character
-            if (collideWithChar(food[slot].posX, food[slot].posY, food[slot].spriteHeight)) {
+            if (collideWithChar(food[slot].pixelPosX, food[slot].pixelPosY, food[slot].spriteHeight)) {
                 food[slot].enabled = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot].y = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot + 1].y = 0;
@@ -604,10 +611,10 @@ void gameScreen() {
                 NR13_REG = 0x00;    // Channel 1 Frequency LSB: (Part of) Freq 1280 Hz
                 NR14_REG = 0xc5 - (bonus >= 50 ? 0x40 : 0);    // Channel 1 Frequency MSB: No Repeat, (Part of) Freq 1280 Hz
                 continue;
-            } else if (((food[slot].posX >> 4) <= 0 && food[slot].speedX < 0)
-                        || ((food[slot].posX >> 4) >= 168 && food[slot].speedX > 0)
-                        || ((food[slot].posY >> 4) <= 0 && food[slot].speedY < 0)
-                        || ((food[slot].posY >> 4) >= 232 && food[slot].speedY > 0)) {   // Max scrollY is 72
+            } else if ((food[slot].pixelPosX <= 0 && food[slot].speedX < 0)
+                        || (food[slot].pixelPosX >= 168 && food[slot].speedX > 0)
+                        || (food[slot].pixelPosY <= 0 && food[slot].speedY < 0)
+                        || (food[slot].pixelPosY >= 232 && food[slot].speedY > 0)) {   // Max scrollY is 72
                 food[slot].enabled = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot].y = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot + 1].y = 0;
@@ -633,7 +640,7 @@ void gameScreen() {
                 }
                 if (moved) {
                     for (int s=0; s<food[slot].spriteHeight; s++) {
-                        move_sprite(FOOD_SPR_NUM_START + 2*slot + s, (food[slot].posX >> 4), (food[slot].posY >> 4) - scrollY + 8*s);
+                        move_sprite(FOOD_SPR_NUM_START + 2*slot + s, food[slot].pixelPosX, food[slot].pixelPosY - scrollY + 8*s);
                     }
                 }
             }
