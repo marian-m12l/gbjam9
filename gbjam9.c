@@ -592,9 +592,10 @@ void gameScreen() {
                 food[slot].enabled = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot].y = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot + 1].y = 0;
-                // Score increases when inputs were not used since many frames (capped at 5 seconds / 150 points)
+                // Score increases when inputs were not used since many frames
                 uint16_t bonus = ((frame - lastInputFrame) >> 1);
-                if (bonus > 150)    bonus = 150;
+                if (bonus > 150)    bonus = 150;    // Bonus is capped at 5 seconds / 150 points
+                if (bonus < 15)     bonus = 0;      // No bonus under a half-second / 15 points
                 score += food[slot].value + bonus;
                 // Play sound effect (emphasized when bonus is >= 50 points)
                 NR10_REG = 0x34 + (bonus >= 50 ? 1 : 0);    // Channel 1 Sweep: Time 3/128Hz, Freq increases, Shift 4
