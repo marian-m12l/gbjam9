@@ -62,11 +62,11 @@
 #define INITIAL_COUNTDOWN_SETTING 3
 
 joypads_t joypads, prevJoypads;
-uint64_t frame = 0;
-uint64_t lastInputFrame = 0;
+uint16_t frame = 0;
+uint16_t lastInputFrame = 0;
 uint8_t vblanks = 0;
 #if SHOW_FPS
-    uint64_t lastVBlankFrame = 0;
+    uint16_t lastVBlankFrame = 0;
     uint8_t fps = 0;
 #endif
 uint8_t paused = 0;
@@ -85,7 +85,7 @@ int16_t posX = 0, posY = 0;
 int16_t speedX = 0, speedY = 0;
 uint8_t scrollY = 0;
 uint8_t charSpriteIdx = 0;
-uint64_t animationLastFrame = 0;
+uint16_t animationLastFrame = 0;
 uint32_t score = 0;
 uint8_t scoreTiles[5] = { sky_tiles_count, sky_tiles_count, sky_tiles_count, sky_tiles_count, sky_tiles_count };
 uint8_t countdownSetting = 0;
@@ -116,7 +116,7 @@ typedef struct food_t {
     uint8_t spriteCount;
     uint8_t spriteHeight;
     uint8_t spriteIdx;
-    uint64_t animationLastFrame;
+    uint16_t animationLastFrame;
     int16_t posX, posY;
     int16_t speedX, speedY;
     int8_t value;
@@ -243,6 +243,9 @@ void initScreen() {
             for (int slot=0; slot<MAX_FOOD; slot++) {
                 food[slot].enabled = 0;
             }
+
+            // Initialize random number generator
+            initrand(DIV_REG);
             break;
         }
         case WINNING_SCREEN: {
@@ -291,7 +294,7 @@ uint8_t justReleased() {
 
 // Number of concurrent food increases with time
 int8_t nextAvailableFoodSlot() {
-    uint64_t maxAvailable = 1 + (frame >> 8);
+    uint16_t maxAvailable = 1 + (frame >> 8);
     if (maxAvailable > MAX_FOOD)    maxAvailable = MAX_FOOD;
     uint8_t slot = 0;
     while (slot < maxAvailable && food[slot].enabled != 0) {
@@ -559,7 +562,7 @@ void gameScreen() {
         food[availableSlot].speedX = (direction > 0) ? (-1 -(abs(rand()) >> 5)) : (1 + (abs(rand()) >> 5));
         if (type == BERRY)  food[availableSlot].speedX *= 4;
         food[availableSlot].speedY = (type == BERRY) ? (-20 -(abs(rand()) >> 3)) : rand() >> 5;
-        food[availableSlot].value = (type == BERRY) ? 80 : 10;
+        food[availableSlot].value = (type == BERRY) ? 100 : 10;
         // Play a sound effect on berry appearance
         if (type == BERRY) {
             NR10_REG = 0xb7;    // Channel 1 Sweep: Time 3/128Hz, Freq increases, Shift 7
@@ -589,14 +592,16 @@ void gameScreen() {
                 food[slot].enabled = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot].y = 0;
                 shadow_OAM[FOOD_SPR_NUM_START + 2*slot + 1].y = 0;
-                // Score increases when inputs were not used since many frames
-                score += food[slot].value + ((frame - lastInputFrame) >> 1);
-                // Play sound effect
-                NR10_REG = 0x34;    // Channel 1 Sweep: Time 3/128Hz, Freq increases, Shift 4
+                // Score increases when inputs were not used since many frames (capped at 5 seconds / 150 points)
+                uint16_t bonus = ((frame - lastInputFrame) >> 1);
+                if (bonus > 150)    bonus = 150;
+                score += food[slot].value + bonus;
+                // Play sound effect (emphasized when bonus is >= 50 points)
+                NR10_REG = 0x34 + (bonus >= 50 ? 1 : 0);    // Channel 1 Sweep: Time 3/128Hz, Freq increases, Shift 4
                 NR11_REG = (food[slot].type == BERRY) ? 0x80 : 0x40;    // Channel 1 Wave Pattern and Sound Length: Duty 50% or 25%, Length 1/4 s
-                NR12_REG = 0x83;    // Channel 1 Volume Envelope: Initial 8, Volume decreases, Steps 3
+                NR12_REG = 0x83 + (bonus >= 50 ? 0x40 : 0);    // Channel 1 Volume Envelope: Initial 8, Volume decreases, Steps 3
                 NR13_REG = 0x00;    // Channel 1 Frequency LSB: (Part of) Freq 1280 Hz
-                NR14_REG = 0xc5;    // Channel 1 Frequency MSB: No Repeat, (Part of) Freq 1280 Hz
+                NR14_REG = 0xc5 - (bonus >= 50 ? 0x40 : 0);    // Channel 1 Frequency MSB: No Repeat, (Part of) Freq 1280 Hz
                 continue;
             } else if (((food[slot].posX >> 4) <= 0 && food[slot].speedX < 0)
                         || ((food[slot].posX >> 4) >= 168 && food[slot].speedX > 0)
