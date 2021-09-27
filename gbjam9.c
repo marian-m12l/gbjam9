@@ -64,6 +64,7 @@
 joypads_t joypads, prevJoypads;
 uint16_t frame = 0;
 uint16_t lastInputFrame = 0;
+uint16_t lastAudioLoopFrame = 0;
 uint8_t vblanks = 0;
 #if SHOW_FPS
     uint16_t lastVBlankFrame = 0;
@@ -125,6 +126,94 @@ typedef struct food_t {
 } food_t;
 food_t food[MAX_FOOD];
 
+// Music
+#define MUSIC_TONES_COUNT 64
+#define MUSIC_DELAY 20
+#define SIXTEENTH_NOTE_DURATION 8
+#define MUSIC_LOOP_AFTER (SIXTEENTH_NOTE_DURATION * 208)
+typedef enum note_t {
+    NONE,
+    A2, A2s, B2,
+    C3, C3s, D3, D3s, E3, F3, F3s, G3, G3s, A3, A3s, B3,
+    C4, C4s, D4, D4s, E4, F4, F4s, G4, G4s, A4, A4s, B4,
+    C5, C5s, D5, D5s, E5, F5, F5s, G5, G5s, A5, A5s, B5,
+    C6, C6s, D6, D6s, E6, F6, F6s, G6, G6s, A6, A6s, B6,
+    C7, C7s, D7, D7s, E7, F7, F7s, G7, G7s, A7, A7s, B7
+} note_t;
+typedef struct tone_t {
+    uint16_t position;
+    note_t note;
+    uint8_t duration;
+} tone_t;
+tone_t music[MUSIC_TONES_COUNT] = {
+    /* Bach's Minuet in G major */
+    {.position=0, .note=B4, .duration=4},
+    {.position=4, .note=G4, .duration=2},
+    {.position=6, .note=A4, .duration=2},
+    {.position=8, .note=B4, .duration=2},
+    {.position=10, .note=G4, .duration=2},
+    {.position=12, .note=A4, .duration=4},
+    {.position=16, .note=D4, .duration=2},
+    {.position=18, .note=E4, .duration=2},
+    {.position=20, .note=F4s, .duration=2},
+    {.position=22, .note=D4, .duration=2},
+    {.position=24, .note=G4, .duration=4},
+    {.position=28, .note=E4, .duration=2},
+    {.position=30, .note=F4s, .duration=2},
+    {.position=32, .note=G4, .duration=2},
+    {.position=34, .note=D4, .duration=2},
+    {.position=36, .note=C4s, .duration=4},
+    {.position=40, .note=B3, .duration=2},
+    {.position=42, .note=C4s, .duration=2},
+    {.position=44, .note=A3, .duration=4},
+    {.position=48, .note=A3, .duration=2},
+    {.position=50, .note=B3, .duration=2},
+    {.position=52, .note=C4s, .duration=2},
+    {.position=54, .note=D4, .duration=2},
+    {.position=56, .note=E4, .duration=2},
+    {.position=58, .note=F4s, .duration=2},
+    {.position=60, .note=G4, .duration=4},
+    {.position=64, .note=F4s, .duration=4},
+    {.position=68, .note=E4, .duration=4},
+    {.position=72, .note=F4s, .duration=4},
+    {.position=76, .note=A3, .duration=4},
+    {.position=80, .note=C4s, .duration=4},
+    {.position=84, .note=D4, .duration=12},
+    {.position=96, .note=NONE, .duration=4},
+    {.position=100, .note=D4, .duration=4},
+    {.position=104, .note=G3, .duration=2},
+    {.position=106, .note=F3, .duration=2},
+    {.position=108, .note=G3, .duration=4},
+    {.position=112, .note=E4, .duration=4},
+    {.position=116, .note=G3, .duration=2},
+    {.position=118, .note=F3, .duration=2},
+    {.position=120, .note=G3, .duration=4},
+    {.position=124, .note=D4, .duration=4},
+    {.position=128, .note=C4, .duration=4},
+    {.position=132, .note=B3, .duration=4},
+    {.position=136, .note=A3, .duration=2},
+    {.position=138, .note=G3, .duration=2},
+    {.position=140, .note=F3, .duration=2},
+    {.position=142, .note=G3, .duration=2},
+    {.position=144, .note=A3, .duration=4},
+    {.position=148, .note=D3, .duration=2},
+    {.position=150, .note=E3, .duration=2},
+    {.position=152, .note=F3, .duration=2},
+    {.position=154, .note=G3, .duration=2},
+    {.position=156, .note=A3, .duration=2},
+    {.position=158, .note=B3, .duration=2},
+    {.position=160, .note=C4, .duration=4},
+    {.position=164, .note=B3, .duration=4},
+    {.position=168, .note=A3, .duration=4},
+    {.position=172, .note=B3, .duration=2},
+    {.position=174, .note=D4, .duration=2},
+    {.position=176, .note=G3, .duration=4},
+    {.position=180, .note=F3, .duration=4},
+    {.position=184, .note=G3, .duration=12},
+    {.position=196, .note=NONE, .duration=12}
+};
+uint16_t nextSound = 0;
+
 
 void initScreen() {
     DISPLAY_OFF;
@@ -154,6 +243,9 @@ void initScreen() {
 
             // Show background
             SHOW_BKG; HIDE_WIN; HIDE_SPRITES;
+
+            // Disable sound
+            NR52_REG = 0x00; // All sound channels OFF
         
             // Set initial state
             frame = 0;
@@ -180,6 +272,9 @@ void initScreen() {
             
             // Use 8x8 sprites/tiles
             SPRITES_8x8;
+
+            // Disable sound
+            NR52_REG = 0x00; // All sound channels OFF
         
             // Set initial state
             if (countdownSetting == 0) {
@@ -241,11 +336,13 @@ void initScreen() {
             countdown = countdownSetting * 60;
             frame = 0;
             lastInputFrame = 0;
+            lastAudioLoopFrame = 0;
             vblanks = 0;
             paused = 0;
             for (int slot=0; slot<MAX_FOOD; slot++) {
                 food[slot].enabled = 0;
             }
+            nextSound = 0;
 
             // Initialize random number generator
             initrand(DIV_REG);
@@ -279,6 +376,9 @@ void initScreen() {
 
             // Show background
             SHOW_BKG; HIDE_WIN; HIDE_SPRITES;
+
+            // Disable sound
+            NR52_REG = 0x00; // All sound channels OFF
         
             // Set initial state
             frame = 0;
@@ -705,6 +805,81 @@ void gameScreen() {
             printInWindowHeader(fpsTiles, 9, 2, fps);
         }
     #endif
+
+    // Play music tones
+    uint16_t musicFrame = frame - lastAudioLoopFrame;
+    if (nextSound < MUSIC_TONES_COUNT && musicFrame >= (MUSIC_DELAY + music[nextSound].position*SIXTEENTH_NOTE_DURATION)) {
+        uint16_t freq;
+        switch (music[nextSound].note) {
+            case C3:    freq = 1046 /*131Hz*/; break;
+            case C3s:   freq = 1102 /*139Hz*/; break;
+            case D3:    freq = 1155 /*147Hz*/; break;
+            case D3s:   freq = 1205 /*156Hz*/; break;
+            case E3:    freq = 1253 /*165Hz*/; break;
+            case F3:    freq = 1297 /*175Hz*/; break;
+            case F3s:   freq = 1339 /*185Hz*/; break;
+            case G3:    freq = 1379 /*196Hz*/; break;
+            case G3s:   freq = 1417 /*208Hz*/; break;
+            case A3:    freq = 1452 /*220Hz*/; break;
+            case A3s:   freq = 1486 /*233Hz*/; break;
+            case B3:    freq = 1517 /*247Hz*/; break;
+            case C4:    freq = 1546 /*262Hz*/; break;
+            case C4s:   freq = 1575 /*277Hz*/; break;
+            case D4:    freq = 1602 /*294Hz*/; break;
+            case D4s:   freq = 1627 /*311Hz*/; break;
+            case E4:    freq = 1650 /*330Hz*/; break;
+            case F4:    freq = 1673 /*349Hz*/; break;
+            case F4s:   freq = 1694 /*370Hz*/; break;
+            case G4:    freq = 1714 /*392Hz*/; break;
+            case G4s:   freq = 1732 /*415Hz*/; break;
+            case A4:    freq = 1750 /*440Hz*/; break;
+            case A4s:   freq = 1767 /*466Hz*/; break;
+            case B4:    freq = 1783 /*494Hz*/; break;
+            case C5:    freq = 1798 /*523Hz*/; break;
+            case C5s:   freq = 1812 /*554Hz*/; break;
+            case D5:    freq = 1825 /*587Hz*/; break;
+            case D5s:   freq = 1837 /*622Hz*/; break;
+            case E5:    freq = 1849 /*659Hz*/; break;
+            case F5:    freq = 1860 /*698Hz*/; break;
+            case F5s:   freq = 1871 /*740Hz*/; break;
+            case G5:    freq = 1881 /*784Hz*/; break;
+            case G5s:   freq = 1890 /*831Hz*/; break;
+            case A5:    freq = 1899 /*880Hz*/; break;
+            case A5s:   freq = 1907 /*932Hz*/; break;
+            case B5:    freq = 1915 /*988Hz*/; break;
+            case C6:    freq = 1923 /*1047Hz*/; break;
+            case C6s:   freq = 1930 /*1109Hz*/; break;
+            case D6:    freq = 1936 /*1175Hz*/; break;
+            case D6s:   freq = 1943 /*1245Hz*/; break;
+            case E6:    freq = 1949 /*1319Hz*/; break;
+            case F6:    freq = 1954 /*1397Hz*/; break;
+            case F6s:   freq = 1959 /*1480Hz*/; break;
+            case G6:    freq = 1964 /*1568Hz*/; break;
+            case G6s:   freq = 1969 /*1661Hz*/; break;
+            case A6:    freq = 1974 /*1760Hz*/; break;
+            case A6s:   freq = 1978 /*1865Hz*/; break;
+            case B6:    freq = 1982 /*1975Hz*/; break;
+            default:    freq = 0; break;
+        }
+        // Turn channel 2 off for silences
+        if (freq == 0) {
+            NR51_REG = 0xDD;
+        } else {
+            NR51_REG = 0xFF;
+            // Play tone on channel 2
+            NR21_REG = 0x80;
+            NR22_REG = 0x30;
+            NR23_REG = freq & 0xff;
+            NR24_REG = 0x80 | (freq >> 8);
+        }
+        nextSound++;
+    }
+    // Handle music loop
+    if ((frame - lastAudioLoopFrame) > MUSIC_LOOP_AFTER) {
+        lastAudioLoopFrame = frame;
+        nextSound = 0;
+    }
+    
 
     frame++;
 }
