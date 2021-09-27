@@ -33,11 +33,11 @@
 // Character metasprite will be built starting with hardware sprite 5 (after pause sprites)
 #define BIRD_SPR_NUM_START (PAUSE_SPR_NUM_START + 5)
 
-#define BIRD_SPRITE_GLIDING 5
-#define BIRD_SPRITE_FLAPPING_START 2
-#define BIRD_SPRITE_FLAPPING_END 9
-#define BIRD_SPRITE_DIVING_START 10
-#define BIRD_SPRITE_DIVING_END 12
+#define BIRD_SPRITE_GLIDING 3
+#define BIRD_SPRITE_FLAPPING_START 0
+#define BIRD_SPRITE_FLAPPING_END 7
+#define BIRD_SPRITE_DIVING_START 8
+#define BIRD_SPRITE_DIVING_END 10
 
 #define INITIAL_SPEED_X 1
 #define MAX_SPEED_X 12
@@ -132,7 +132,7 @@ void initScreen() {
     // Init palettes
     BGP_REG = 0xE4;     // BG Palette : Black, Dark gray, Light gray, White
     OBP0_REG = 0xE4;    // Sprite palette 0 : Black, Dark gray, Light gray, Transparent
-    OBP1_REG = 0xE0;    // Sprite palette 1 : Black, Dark gray, White, Transparent
+    OBP1_REG = 0xE4;    // Sprite palette 1 : Black, Dark gray, Light gray, Transparent
 
     switch (screen) {
         case TITLE_SCREEN: {
